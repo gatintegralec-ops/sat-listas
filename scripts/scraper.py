@@ -26,9 +26,22 @@ import requests
 # Configuración
 # ---------------------------------------------------------------------------
 
+# El Art. 69 no tiene un único CSV: el SAT lo publica en 6 archivos separados por
+# categoría (vía el portal de datos abiertos del gobierno, más estable que el portal
+# viejo del SAT). Se descargan los 6 y se combinan en una sola tabla, agregando la
+# columna "Supuesto" para saber de cuál venía cada fila.
+FUENTES_69_CATEGORIAS = {
+    "entes_publicos_omisos": "https://repodatos.atdt.gob.mx/api_update/sat/contribuyentes_incumplidos/SAT_2_EntespublicosydeGobiernoomisos.csv",
+    "sentencias": "https://www.datos.gob.mx/dataset/382fc296-5e90-4880-b0ca-4ed688f591ef/resource/4e0f0456-484c-4332-a63a-a6f2d3138dd5/download/sat_3_sentencias.csv",
+    "no_localizados": "https://www.datos.gob.mx/dataset/382fc296-5e90-4880-b0ca-4ed688f591ef/resource/83fa79b9-357b-4ada-b0a4-950c97c50461/download/sat_4_nolocalizados.csv",
+    "firmes": "https://www.datos.gob.mx/dataset/382fc296-5e90-4880-b0ca-4ed688f591ef/resource/29a7c943-1f77-42b2-95da-d3dc53549c94/download/sat_5_firmes.csv",
+    "exigibles": "https://www.datos.gob.mx/dataset/382fc296-5e90-4880-b0ca-4ed688f591ef/resource/6301fffe-2388-489a-85e1-5c5ffcda4ce0/download/sat_6_exigibles.csv",
+    "cancelados": "https://www.datos.gob.mx/dataset/382fc296-5e90-4880-b0ca-4ed688f591ef/resource/1b04d73d-faea-4056-bbab-81df9de5188f/download/sat_7_cancelados.csv",
+}
+
 FUENTES = {
     "69": {
-        "url": "http://omawww.sat.gob.mx/cifras_sat/Documents/Listado_Completo_69.csv",
+        "categorias": FUENTES_69_CATEGORIAS,
         "tabla": "listado_69",
     },
     "69b": {
@@ -75,6 +88,23 @@ def encontrar_fila_encabezado(lineas: list[str]) -> int:
         if "RFC" in linea.upper():
             return i
     return 0  # si no la encuentra, asume que no hay metadata
+
+
+def descargar_y_combinar_69(categorias: dict) -> list[dict]:
+    """Descarga las 6 categorías del Art. 69 y las combina, marcando la fuente de cada fila."""
+    todas = []
+    for nombre_categoria, url in categorias.items():
+        try:
+            raw = descargar_csv(url)
+        except requests.RequestException as e:
+            print(f"  ADVERTENCIA: no se pudo descargar categoría '{nombre_categoria}': {e}", file=sys.stderr)
+            continue
+        filas = parsear_csv(raw)
+        for fila in filas:
+            fila["Supuesto_Art69"] = nombre_categoria
+        print(f"  {nombre_categoria}: {len(filas)} registros")
+        todas.extend(filas)
+    return todas
 
 
 def parsear_csv(raw: bytes) -> list[dict]:
@@ -253,13 +283,17 @@ def exportar_json_para_web(conn: sqlite3.Connection):
 
 def procesar_fuente(conn: sqlite3.Connection, clave: str, cfg: dict, watchlist: set[str], fecha: str):
     print(f"\n--- Procesando {clave.upper()} ---")
-    try:
-        raw = descargar_csv(cfg["url"])
-    except requests.RequestException as e:
-        print(f"ERROR descargando {clave}: {e}", file=sys.stderr)
-        return
 
-    filas = parsear_csv(raw)
+    if "categorias" in cfg:
+        filas = descargar_y_combinar_69(cfg["categorias"])
+    else:
+        try:
+            raw = descargar_csv(cfg["url"])
+        except requests.RequestException as e:
+            print(f"ERROR descargando {clave}: {e}", file=sys.stderr)
+            return
+        filas = parsear_csv(raw)
+
     print(f"{len(filas)} registros parseados de {clave.upper()}")
     if not filas:
         print("ADVERTENCIA: 0 filas parseadas, revisa el formato del CSV manualmente.", file=sys.stderr)
@@ -276,9 +310,13 @@ def procesar_fuente(conn: sqlite3.Connection, clave: str, cfg: dict, watchlist: 
     print(f"Nuevos: {len(diff['nuevos'])} | Removidos: {len(diff['removidos'])} | "
           f"Cambios de estatus: {len(diff['cambios_estatus'])}")
 
-    diff_watchlist = filtrar_diff_por_watchlist(diff, watchlist)
-    if hay_cambios(diff_watchlist):
-        enviar_alerta(clave, diff_watchlist)
+    if watchlist:
+        diff_watchlist = filtrar_diff_por_watchlist(diff, watchlist)
+        if hay_cambios(diff_watchlist):
+            enviar_alerta(clave, diff_watchlist)
+    # Si no hay watchlist configurada, no se envían alertas (evita ruido con
+    # todo el listado en la primera corrida). Configura scripts/watchlist.csv
+    # con tus RFCs para activar las alertas dirigidas.
 
     guardar_corrida(conn, tabla, filas, fecha)
     conn.execute(
