@@ -1,0 +1,35 @@
+name: Actualizar listados SAT 69 y 69-B
+
+on:
+  schedule:
+    - cron: "0 13 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  actualizar:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Instalar dependencias
+        run: pip install -r scripts/requirements.txt
+
+      - name: Correr scraper
+        run: python scripts/scraper.py
+
+      - name: Commit de cambios (base de datos, docs/data.json, log de diffs)
+        run: |
+          git config user.name "sat-monitor-bot"
+          git config user.email "actions@github.com"
+          git add scripts/sat_listas.db docs/data.json scripts/diffs.jsonl
+          git diff --cached --quiet || git commit -m "Actualización automática $(date -u +%Y-%m-%d)"
+          git push
