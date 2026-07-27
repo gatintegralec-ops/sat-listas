@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Consulta Art. 69 / 69-B CFF</title>
+<style>
+  :root{
+    --ink:#1a2332;
+    --paper:#f7f6f2;
+    --line:#d8d4c8;
+    --slate:#4a5568;
+    --alert:#a8432f;
+    --alert-bg:#f7e9e5;
+    --ok:#2f6b4f;
+    --ok-bg:#e8f0ea;
+    --mono: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+    --serif: "Source Serif 4", Georgia, serif;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; background:var(--paper); color:var(--ink);
+    font-family:var(--serif); line-height:1.5;
+  }
+  header{
+    border-bottom:1px solid var(--line);
+    padding:2.5rem 1.5rem 1.5rem;
+    max-width:760px; margin:0 auto;
+  }
+  .eyebrow{
+    font-family:var(--mono); font-size:0.72rem; letter-spacing:0.14em;
+    text-transform:uppercase; color:var(--slate); margin:0 0 0.6rem;
+  }
+  h1{ font-size:1.9rem; margin:0 0 0.4rem; font-weight:600; }
+  .sub{ color:var(--slate); font-size:0.95rem; margin:0; }
+  main{ max-width:760px; margin:0 auto; padding:2rem 1.5rem 4rem; }
+  .search-row{ display:flex; gap:0.6rem; margin-bottom:0.5rem; }
+  input[type=text]{
+    flex:1; font-family:var(--mono); font-size:1rem;
+    padding:0.85rem 1rem; border:1px solid var(--ink); border-radius:2px;
+    background:#fff; color:var(--ink);
+  }
+  input[type=text]:focus{ outline:2px solid var(--ink); outline-offset:1px; }
+  button{
+    font-family:var(--mono); font-size:0.85rem; letter-spacing:0.03em;
+    padding:0.85rem 1.3rem; background:var(--ink); color:var(--paper);
+    border:none; border-radius:2px; cursor:pointer;
+  }
+  button:hover{ background:#000; }
+  .meta-line{ font-family:var(--mono); font-size:0.75rem; color:var(--slate); margin-bottom:2rem; }
+  .result{
+    border:1px solid var(--line); border-radius:3px; padding:1.3rem 1.4rem;
+    margin-bottom:1rem; background:#fff;
+  }
+  .result.found{ border-color:var(--alert); background:var(--alert-bg); }
+  .result.clean{ border-color:var(--ok); background:var(--ok-bg); }
+  .result .rfc{ font-family:var(--mono); font-weight:600; font-size:1.05rem; }
+  .result .badge{
+    display:inline-block; font-family:var(--mono); font-size:0.7rem;
+    letter-spacing:0.06em; text-transform:uppercase; padding:0.15rem 0.5rem;
+    border-radius:2px; margin-left:0.6rem; vertical-align:middle;
+  }
+  .found .badge{ background:var(--alert); color:#fff; }
+  .clean .badge{ background:var(--ok); color:#fff; }
+  dl{ margin:0.9rem 0 0; display:grid; grid-template-columns:auto 1fr; gap:0.3rem 1rem; font-size:0.88rem; }
+  dt{ color:var(--slate); font-family:var(--mono); font-size:0.75rem; text-transform:uppercase; }
+  dd{ margin:0; }
+  footer{
+    max-width:760px; margin:0 auto; padding:1.5rem; color:var(--slate);
+    font-family:var(--mono); font-size:0.72rem; border-top:1px solid var(--line);
+  }
+  .empty-state{ color:var(--slate); font-size:0.9rem; padding:1rem 0; }
+</style>
+</head>
+<body>
+
+<header>
+  <p class="eyebrow">CFF · Art. 69 y 69-B</p>
+  <h1>Consulta de contribuyentes publicados</h1>
+  <p class="sub">Busca un RFC contra los listados oficiales del SAT. Datos actualizados automáticamente en cada publicación.</p>
+</header>
+
+<main>
+  <div class="search-row">
+    <input type="text" id="rfcInput" placeholder="Escribe un RFC, ej. AAA010101AAA" autocomplete="off" spellcheck="false">
+    <button id="searchBtn">Consultar</button>
+  </div>
+  <p class="meta-line" id="metaLine">Cargando datos…</p>
+  <div id="results"></div>
+</main>
+
+<footer>
+  Fuente: listados oficiales del SAT (Art. 69 y 69-B CFF). Esta herramienta es de consulta informativa
+  y no sustituye la verificación directa en el portal del SAT.
+</footer>
+
+<script>
+let DATA = null;
+
+async function cargarDatos(){
+  try{
+    const res = await fetch('data.json?_=' + Date.now());
+    DATA = await res.json();
+    const fecha = new Date(DATA.generado).toLocaleString('es-MX', { dateStyle: 'medium', timeStyle: 'short' });
+    const total69 = (DATA.fuentes['69'] || []).length;
+    const total69b = (DATA.fuentes['69b'] || []).length;
+    document.getElementById('metaLine').textContent =
+      `Última actualización: ${fecha} · Art. 69: ${total69.toLocaleString('es-MX')} registros · Art. 69-B: ${total69b.toLocaleString('es-MX')} registros`;
+  }catch(e){
+    document.getElementById('metaLine').textContent =
+      'No se pudo cargar data.json todavía. Corre el scraper al menos una vez.';
+  }
+}
+
+function buscar(){
+  const rfc = document.getElementById('rfcInput').value.trim().toUpperCase();
+  const resultsEl = document.getElementById('results');
+  resultsEl.innerHTML = '';
+
+  if(!rfc){
+    resultsEl.innerHTML = '<p class="empty-state">Escribe un RFC para consultar.</p>';
+    return;
+  }
+  if(!DATA){
+    resultsEl.innerHTML = '<p class="empty-state">Los datos aún no han cargado.</p>';
+    return;
+  }
+
+  let encontrado = false;
+
+  for(const [clave, nombre] of [['69b','Art. 69-B (EFOS)'], ['69','Art. 69']]){
+    const filas = (DATA.fuentes[clave] || []).filter(f => (f.RFC || f.Rfc || '').toUpperCase() === rfc);
+    filas.forEach(fila => {
+      encontrado = true;
+      const div = document.createElement('div');
+      div.className = 'result found';
+      const campos = Object.entries(fila)
+        .filter(([k,v]) => k.toUpperCase() !== 'RFC' && v)
+        .map(([k,v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');
+      div.innerHTML = `<span class="rfc">${rfc}</span><span class="badge">Publicado — ${nombre}</span><dl>${campos}</dl>`;
+      resultsEl.appendChild(div);
+    });
+  }
+
+  if(!encontrado){
+    const div = document.createElement('div');
+    div.className = 'result clean';
+    div.innerHTML = `<span class="rfc">${rfc}</span><span class="badge">Sin coincidencias</span>
+      <p class="empty-state" style="padding-top:0.6rem;">No aparece en los listados descargados más recientes de Art. 69 ni 69-B.</p>`;
+    resultsEl.appendChild(div);
+  }
+}
+
+document.getElementById('searchBtn').addEventListener('click', buscar);
+document.getElementById('rfcInput').addEventListener('keydown', e => { if(e.key === 'Enter') buscar(); });
+
+cargarDatos();
+</script>
+
+</body>
+</html>
