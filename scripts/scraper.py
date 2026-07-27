@@ -61,9 +61,9 @@ ENCODINGS_A_PROBAR = ["utf-8-sig", "utf-8", "windows-1250", "cp1252", "latin-1"]
 # Descarga y parseo
 # ---------------------------------------------------------------------------
 
-def descargar_csv(url: str) -> bytes:
+def descargar_csv(url: str, verificar_ssl: bool = True) -> bytes:
     headers = {"User-Agent": "Mozilla/5.0 (compatible; SAT-monitor/1.0)"}
-    resp = requests.get(url, headers=headers, timeout=60)
+    resp = requests.get(url, headers=headers, timeout=60, verify=verificar_ssl)
     resp.raise_for_status()
     return resp.content
 
@@ -91,11 +91,23 @@ def encontrar_fila_encabezado(lineas: list[str]) -> int:
 
 
 def descargar_y_combinar_69(categorias: dict) -> list[dict]:
-    """Descarga las 6 categorías del Art. 69 y las combina, marcando la fuente de cada fila."""
+    """
+    Descarga las 6 categorías del Art. 69 y las combina, marcando la fuente de cada fila.
+
+    Nota: datos.gob.mx tiene la cadena de certificados SSL mal configurada del lado
+    del servidor (problema conocido en varios sitios .gob.mx), así que estas descargas
+    se hacen sin verificar el certificado. El riesgo es bajo porque son datos públicos
+    de solo lectura, pero si prefieres no desactivar la verificación, puedes intentar
+    correr el script con `pip install certifi --upgrade` primero, o cambiar
+    verificar_ssl=True aquí y ver si tu entorno ya trae el certificado correcto.
+    """
+    import urllib3
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
     todas = []
     for nombre_categoria, url in categorias.items():
         try:
-            raw = descargar_csv(url)
+            raw = descargar_csv(url, verificar_ssl=False)
         except requests.RequestException as e:
             print(f"  ADVERTENCIA: no se pudo descargar categoría '{nombre_categoria}': {e}", file=sys.stderr)
             continue
