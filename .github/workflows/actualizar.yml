@@ -35,10 +35,10 @@ jobs:
       - name: Correr scraper
         run: python scripts/scraper.py
 
-      - name: Commit de cambios (docs/data.json, log de diffs)
+      - name: Commit de cambios (docs/data/, log de diffs)
         run: |
           git config user.name "sat-monitor-bot"
           git config user.email "actions@github.com"
-          git add docs/data.json scripts/diffs.jsonl
+          git add docs/data/ scripts/diffs.jsonl
           git diff --cached --quiet || git commit -m "Actualización automática $(date -u +%Y-%m-%d)"
           git push
