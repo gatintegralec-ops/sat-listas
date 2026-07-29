@@ -26,17 +26,25 @@ import requests
 # Configuración
 # ---------------------------------------------------------------------------
 
-# El Art. 69 no tiene un único CSV: el SAT lo publica en 6 archivos separados por
-# categoría (vía el portal de datos abiertos del gobierno, más estable que el portal
-# viejo del SAT). Se descargan los 6 y se combinan en una sola tabla, agregando la
-# columna "Supuesto" para saber de cuál venía cada fila.
+# El Art. 69 no tiene un único CSV: el SAT lo publica en 14 archivos separados por
+# categoría/supuesto legal. Fuente oficial: minisitio de Datos Abiertos del SAT
+# (https://www.sat.gob.mx/minisitio/DatosAbiertos/contribuyentes_publicados.html),
+# alojado en Azure Blob Storage — confiable y sin bloqueo anti-bot.
 FUENTES_69_CATEGORIAS = {
-    "entes_publicos_omisos": "https://repodatos.atdt.gob.mx/api_update/sat/contribuyentes_incumplidos/SAT_2_EntespublicosydeGobiernoomisos.csv",
-    "sentencias": "https://www.datos.gob.mx/dataset/382fc296-5e90-4880-b0ca-4ed688f591ef/resource/4e0f0456-484c-4332-a63a-a6f2d3138dd5/download/sat_3_sentencias.csv",
-    "no_localizados": "https://www.datos.gob.mx/dataset/382fc296-5e90-4880-b0ca-4ed688f591ef/resource/83fa79b9-357b-4ada-b0a4-950c97c50461/download/sat_4_nolocalizados.csv",
-    "firmes": "https://www.datos.gob.mx/dataset/382fc296-5e90-4880-b0ca-4ed688f591ef/resource/29a7c943-1f77-42b2-95da-d3dc53549c94/download/sat_5_firmes.csv",
-    "exigibles": "https://www.datos.gob.mx/dataset/382fc296-5e90-4880-b0ca-4ed688f591ef/resource/6301fffe-2388-489a-85e1-5c5ffcda4ce0/download/sat_6_exigibles.csv",
-    "cancelados": "https://www.datos.gob.mx/dataset/382fc296-5e90-4880-b0ca-4ed688f591ef/resource/1b04d73d-faea-4056-bbab-81df9de5188f/download/sat_7_cancelados.csv",
+    "cancelados": "https://wu1agsprosta001.blob.core.windows.net/agsc-publicaciones/Datos_abiertos/Documents_AGR/Cancelados.csv",
+    "reduccion_multas_art74": "https://wu1agsprosta001.blob.core.windows.net/agsc-publicaciones/Datos_abiertos/Documents_AGR/ReduccionArt74CFF.csv",
+    "condonados_concurso_mercantil_146b": "https://wu1agsprosta001.blob.core.windows.net/agsc-publicaciones/Datos_abiertos/Cifras_SAT/Indef/Condonadosart146BCFF.csv",
+    "reduccion_recargos_art21": "https://wu1agsprosta001.blob.core.windows.net/agsc-publicaciones/Datos_abiertos/Cifras_SAT/Indef/Condonadosart21CFF.csv",
+    "condonados_por_decreto": "https://wu1agsprosta001.blob.core.windows.net/agsc-publicaciones/Datos_abiertos/Cifras_SAT/Indef/CondonadosporDecreto.csv",
+    "condonados_2007_2015": "https://wu1agsprosta001.blob.core.windows.net/agsc-publicaciones/Datos_abiertos/Cifras_SAT/Indef/Condonados_07_15.csv",
+    "cancelados_146a_2007_2015": "https://wu1agsprosta001.blob.core.windows.net/agsc-publicaciones/Datos_abiertos/Cifras_SAT/Indef/Cancelados_07_15.csv",
+    "retorno_inversiones": "https://wu1agsprosta001.blob.core.windows.net/agsc-publicaciones/Datos_abiertos/Cifras_SAT/Indef/Retornoinversiones.csv",
+    "exigibles": "https://wu1agsprosta001.blob.core.windows.net/agsc-publicaciones/Datos_abiertos/Documents_AGR/Exigibles.csv",
+    "firmes": "https://wu1agsprosta001.blob.core.windows.net/agsc-publicaciones/Datos_abiertos/Documents_AGR/Firmes.csv",
+    "no_localizados": "https://wu1agsprosta001.blob.core.windows.net/agsc-publicaciones/Datos_abiertos/Documents_AGR/No_localizados.csv",
+    "sentencias": "https://wu1agsprosta001.blob.core.windows.net/agsc-publicaciones/Datos_abiertos/Documents_AGR/Sentencias.csv",
+    "csd_sin_efectos": "https://wu1agsprosta001.blob.core.windows.net/agsc-publicaciones/Datos_abiertos/Documents_AGR/CSDsinefectos.csv",
+    "entes_publicos_omisos": "https://wu1agsprosta001.blob.core.windows.net/agsc-publicaciones/Datos_abiertos/Documents_AGR/EntespublicosydeGobiernoomisos.csv",
 }
 
 FUENTES = {
@@ -45,7 +53,7 @@ FUENTES = {
         "tabla": "listado_69",
     },
     "69b": {
-        "url": "http://omawww.sat.gob.mx/cifras_sat/Documents/Listado_Completo_69-B.csv",
+        "url": "https://wu1agsprosta001.blob.core.windows.net/agsc-publicaciones/Datos_abiertos/Documents_AGAFF/Listado_completo_69-B.csv",
         "tabla": "listado_69b",
     },
 }
@@ -91,23 +99,11 @@ def encontrar_fila_encabezado(lineas: list[str]) -> int:
 
 
 def descargar_y_combinar_69(categorias: dict) -> list[dict]:
-    """
-    Descarga las 6 categorías del Art. 69 y las combina, marcando la fuente de cada fila.
-
-    Nota: datos.gob.mx tiene la cadena de certificados SSL mal configurada del lado
-    del servidor (problema conocido en varios sitios .gob.mx), así que estas descargas
-    se hacen sin verificar el certificado. El riesgo es bajo porque son datos públicos
-    de solo lectura, pero si prefieres no desactivar la verificación, puedes intentar
-    correr el script con `pip install certifi --upgrade` primero, o cambiar
-    verificar_ssl=True aquí y ver si tu entorno ya trae el certificado correcto.
-    """
-    import urllib3
-    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
+    """Descarga las 14 categorías del Art. 69 y las combina, marcando la fuente de cada fila."""
     todas = []
     for nombre_categoria, url in categorias.items():
         try:
-            raw = descargar_csv(url, verificar_ssl=False)
+            raw = descargar_csv(url)
         except requests.RequestException as e:
             print(f"  ADVERTENCIA: no se pudo descargar categoría '{nombre_categoria}': {e}", file=sys.stderr)
             continue
@@ -161,6 +157,21 @@ def init_db(conn: sqlite3.Connection):
         )
     """)
     conn.commit()
+
+
+PRUNE_DIAS = 90  # cuántos días de historial conservar; evita que la DB crezca sin límite
+
+
+def podar_historial_viejo(conn: sqlite3.Connection):
+    """Borra snapshots de corridas más viejas que PRUNE_DIAS, para controlar el tamaño de la DB."""
+    from datetime import timedelta
+    limite = (datetime.now(timezone.utc) - timedelta(days=PRUNE_DIAS)).isoformat()
+    for cfg in FUENTES.values():
+        tabla = cfg["tabla"]
+        conn.execute(f"DELETE FROM {tabla} WHERE fecha_corrida < ?", (limite,))
+    conn.execute("DELETE FROM corridas WHERE fecha < ?", (limite,))
+    conn.commit()
+    conn.execute("VACUUM")
 
 
 def rfc_de_fila(fila: dict) -> str:
@@ -350,6 +361,7 @@ def main():
     for clave, cfg in FUENTES.items():
         procesar_fuente(conn, clave, cfg, watchlist, fecha)
 
+    podar_historial_viejo(conn)
     exportar_json_para_web(conn)
     conn.close()
     print("\nListo.")
