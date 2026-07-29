@@ -2,8 +2,9 @@ name: Actualizar listados SAT 69 y 69-B
 
 on:
   schedule:
+    # Corre todos los días a las 13:00 UTC (7am hora CDMX aprox., ajusta si quieres)
     - cron: "0 13 * * *"
-  workflow_dispatch: {}
+  workflow_dispatch: {}   # permite correrlo manualmente desde la pestaña Actions
 
 permissions:
   contents: write
@@ -23,13 +24,21 @@ jobs:
       - name: Instalar dependencias
         run: pip install -r scripts/requirements.txt
 
+      - name: Restaurar base de datos (cache entre corridas)
+        uses: actions/cache@v4
+        with:
+          path: scripts/sat_listas.db
+          key: sat-db-${{ github.run_id }}
+          restore-keys: |
+            sat-db-
+
       - name: Correr scraper
         run: python scripts/scraper.py
 
-      - name: Commit de cambios (base de datos, docs/data.json, log de diffs)
+      - name: Commit de cambios (docs/data.json, log de diffs)
         run: |
           git config user.name "sat-monitor-bot"
           git config user.email "actions@github.com"
-          git add scripts/sat_listas.db docs/data.json scripts/diffs.jsonl
+          git add docs/data.json scripts/diffs.jsonl
           git diff --cached --quiet || git commit -m "Actualización automática $(date -u +%Y-%m-%d)"
           git push
