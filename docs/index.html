@@ -95,24 +95,38 @@
 </footer>
 
 <script>
-let DATA = null;
+let manifest = null;
+const cacheShards = {};
 
-async function cargarDatos(){
+async function cargarManifest(){
   try{
-    const res = await fetch('data.json?_=' + Date.now());
-    DATA = await res.json();
-    const fecha = new Date(DATA.generado).toLocaleString('es-MX', { dateStyle: 'medium', timeStyle: 'short' });
-    const total69 = (DATA.fuentes['69'] || []).length;
-    const total69b = (DATA.fuentes['69b'] || []).length;
+    const res = await fetch('data/_manifest.json?_=' + Date.now());
+    manifest = await res.json();
+    const fecha = new Date(manifest.generado).toLocaleString('es-MX', { dateStyle: 'medium', timeStyle: 'short' });
+    const total69 = (manifest.totales['69'] || 0);
+    const total69b = (manifest.totales['69b'] || 0);
     document.getElementById('metaLine').textContent =
       `Última actualización: ${fecha} · Art. 69: ${total69.toLocaleString('es-MX')} registros · Art. 69-B: ${total69b.toLocaleString('es-MX')} registros`;
   }catch(e){
     document.getElementById('metaLine').textContent =
-      'No se pudo cargar data.json todavía. Corre el scraper al menos una vez.';
+      'No se pudo cargar el índice todavía. Corre el scraper al menos una vez.';
   }
 }
 
-function buscar(){
+async function obtenerShard(prefijo){
+  if(cacheShards[prefijo]) return cacheShards[prefijo];
+  try{
+    const res = await fetch(`data/${prefijo}.json?_=` + Date.now());
+    if(!res.ok) return null;
+    const datos = await res.json();
+    cacheShards[prefijo] = datos;
+    return datos;
+  }catch(e){
+    return null;
+  }
+}
+
+async function buscar(){
   const rfc = document.getElementById('rfcInput').value.trim().toUpperCase();
   const resultsEl = document.getElementById('results');
   resultsEl.innerHTML = '';
@@ -121,15 +135,25 @@ function buscar(){
     resultsEl.innerHTML = '<p class="empty-state">Escribe un RFC para consultar.</p>';
     return;
   }
-  if(!DATA){
+  if(!manifest){
     resultsEl.innerHTML = '<p class="empty-state">Los datos aún no han cargado.</p>';
+    return;
+  }
+
+  resultsEl.innerHTML = '<p class="empty-state">Buscando…</p>';
+  const prefijo = rfc.slice(0, 2) || 'ZZ';
+  const shard = await obtenerShard(prefijo);
+  resultsEl.innerHTML = '';
+
+  if(!shard){
+    resultsEl.innerHTML = '<p class="empty-state">No se encontró información para ese RFC.</p>';
     return;
   }
 
   let encontrado = false;
 
   for(const [clave, nombre] of [['69b','Art. 69-B (EFOS)'], ['69','Art. 69']]){
-    const filas = (DATA.fuentes[clave] || []).filter(f => (f.RFC || f.Rfc || '').toUpperCase() === rfc);
+    const filas = (shard[clave] || []).filter(f => (f.RFC || f.Rfc || '').toUpperCase() === rfc);
     filas.forEach(fila => {
       encontrado = true;
       const div = document.createElement('div');
@@ -154,7 +178,7 @@ function buscar(){
 document.getElementById('searchBtn').addEventListener('click', buscar);
 document.getElementById('rfcInput').addEventListener('keydown', e => { if(e.key === 'Enter') buscar(); });
 
-cargarDatos();
+cargarManifest();
 </script>
 
 </body>
