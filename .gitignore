@@ -1,1 +1,4 @@
-
+scripts/sat_listas.db
+scripts/sat_listas.db-journal
+__pycache__/
+*.pyc
