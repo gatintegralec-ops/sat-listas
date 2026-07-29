@@ -60,7 +60,6 @@ FUENTES = {
 
 DB_PATH = Path(__file__).parent / "sat_listas.db"
 WATCHLIST_PATH = Path(__file__).parent / "watchlist.csv"   # RFCs que te interesa monitorear
-DOCS_DATA_PATH = Path(__file__).parent.parent / "docs" / "data.json"
 DIFF_LOG_PATH = Path(__file__).parent / "diffs.jsonl"       # historial de cambios, uno por corrida
 
 ENCODINGS_A_PROBAR = ["utf-8-sig", "utf-8", "windows-1250", "cp1252", "latin-1"]
@@ -230,9 +229,11 @@ def calcular_diff(anterior: dict, actual: dict) -> dict:
                     "rfc": rfc, "antes": v_ant, "ahora": v_act,
                 })
 
+    # Solo guardamos los RFCs (no las filas completas) para que el log de diffs
+    # no crezca sin control con datasets grandes como el del Art. 69.
     return {
-        "nuevos": [{"rfc": r, "datos": actual[r]} for r in nuevos],
-        "removidos": [{"rfc": r, "datos": anterior[r]} for r in removidos],
+        "nuevos": nuevos,
+        "removidos": removidos,
         "cambios_estatus": cambios_estatus,
     }
 
@@ -252,8 +253,8 @@ def filtrar_diff_por_watchlist(diff: dict, watchlist: set[str]) -> dict:
     if not watchlist:
         return diff
     return {
-        "nuevos": [x for x in diff["nuevos"] if x["rfc"].upper() in watchlist],
-        "removidos": [x for x in diff["removidos"] if x["rfc"].upper() in watchlist],
+        "nuevos": [r for r in diff["nuevos"] if r.upper() in watchlist],
+        "removidos": [r for r in diff["removidos"] if r.upper() in watchlist],
         "cambios_estatus": [x for x in diff["cambios_estatus"] if x["rfc"].upper() in watchlist],
     }
 
@@ -287,17 +288,58 @@ def enviar_alerta(fuente: str, diff_watchlist: dict):
 # Export para la página de consulta (GitHub Pages)
 # ---------------------------------------------------------------------------
 
+DOCS_DATA_DIR = Path(__file__).parent.parent / "docs" / "data"
+
+
 def exportar_json_para_web(conn: sqlite3.Connection):
-    export = {"generado": datetime.now(timezone.utc).isoformat(), "fuentes": {}}
+    """
+    Exporta los datos divididos ('sharded') en archivos pequeños por prefijo de RFC
+    (primeros 2 caracteres), en vez de un solo JSON gigante. Necesario porque el
+    Art. 69 puede tener cientos de miles de registros — un archivo único sería
+    demasiado pesado para servir desde GitHub Pages y para que el navegador lo cargue.
+    La página de consulta pide solo el shard correspondiente al RFC que se busca.
+    """
+    shards: dict[str, dict] = {}  # "AB" -> {"69": [...], "69b": [...]}
+    totales = {}
+
     for clave, cfg in FUENTES.items():
         tabla = cfg["tabla"]
         actual = obtener_ultima_corrida(conn, tabla)
-        export["fuentes"][clave] = list(actual.values())
+        totales[clave] = len(actual)
+        for rfc, fila in actual.items():
+            prefijo = (rfc[:2] or "ZZ").upper()
+            shards.setdefault(prefijo, {"69": [], "69b": []})
+            shards[prefijo][clave].append(fila)
 
-    DOCS_DATA_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with open(DOCS_DATA_PATH, "w", encoding="utf-8") as f:
-        json.dump(export, f, ensure_ascii=False)
-    print(f"Exportado JSON de consulta a {DOCS_DATA_PATH}")
+    DOCS_DATA_DIR.mkdir(parents=True, exist_ok=True)
+    # Limpia shards viejos antes de escribir los nuevos (por si algún prefijo ya no aplica)
+    for f in DOCS_DATA_DIR.glob("*.json"):
+        f.unlink()
+
+    for prefijo, contenido in shards.items():
+        with open(DOCS_DATA_DIR / f"{prefijo}.json", "w", encoding="utf-8") as f:
+            json.dump(contenido, f, ensure_ascii=False)
+
+    manifest = {
+        "generado": datetime.now(timezone.utc).isoformat(),
+        "totales": totales,
+    }
+    with open(DOCS_DATA_DIR / "_manifest.json", "w", encoding="utf-8") as f:
+        json.dump(manifest, f, ensure_ascii=False)
+
+    print(f"Exportados {len(shards)} archivos de shard a {DOCS_DATA_DIR}")
+
+
+def podar_diffs_log():
+    """Mantiene diffs.jsonl acotado, conservando solo las últimas N corridas."""
+    if not DIFF_LOG_PATH.exists():
+        return
+    with open(DIFF_LOG_PATH, encoding="utf-8") as f:
+        lineas = f.readlines()
+    MAX_LINEAS = 120  # ~2 corridas/día * 60 días de margen
+    if len(lineas) > MAX_LINEAS:
+        with open(DIFF_LOG_PATH, "w", encoding="utf-8") as f:
+            f.writelines(lineas[-MAX_LINEAS:])
 
 
 # ---------------------------------------------------------------------------
@@ -362,6 +404,7 @@ def main():
         procesar_fuente(conn, clave, cfg, watchlist, fecha)
 
     podar_historial_viejo(conn)
+    podar_diffs_log()
     exportar_json_para_web(conn)
     conn.close()
     print("\nListo.")
